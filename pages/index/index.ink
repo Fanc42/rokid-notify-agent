@@ -176,6 +176,66 @@ export default {
     return { data: clamped, width: w, height: h }
   },
 
+  // ---- 从 photo 取文件路径（小图/低清档返回 tempFilePath 而非 imageData）----
+  getPhotoFilePath(photo) {
+    if (!photo) return null
+    const c = photo.tempFilePath || photo.tempFile || photo.filePath || photo.path || photo.file
+    return typeof c === 'string' && c ? c : null
+  },
+
+  // ---- canvas 兜底：文件路径 → 缩放绘制到 360×360 画布 → ImageData ----
+  // 参考 rokid-aiui-lab 真机验证链路（BARCODE_CANVAS_SIZE=360：小图识别稳、快）
+  canvasImageDataFromPath(filePath) {
+    const size = 360
+    return new Promise((resolve, reject) => {
+      if (!wx || !wx.createCanvasContext || !wx.canvasGetImageData) {
+        reject(new Error('canvas 像素接口不可用'))
+        return
+      }
+      const ctx = wx.createCanvasContext('ntfDecodeCanvas', this)
+      if (!ctx || !ctx.drawImage) {
+        reject(new Error('canvas.drawImage 不存在'))
+        return
+      }
+      try {
+        if (ctx.clearRect) ctx.clearRect(0, 0, size, size)
+        ctx.drawImage(filePath, 0, 0, size, size)
+        ctx.draw(false, () => {
+          wx.canvasGetImageData({
+            canvasId: 'ntfDecodeCanvas',
+            x: 0,
+            y: 0,
+            width: size,
+            height: size,
+            success: (res) => {
+              const imageData = this.toImageData(res.data, res.width || size, res.height || size)
+              if (imageData) resolve(imageData)
+              else reject(new Error('canvas 未返回 ImageData'))
+            },
+            fail: (err) => reject(err || new Error('canvasGetImageData fail')),
+          }, this)
+        })
+      } catch (err) {
+        reject(err)
+      }
+    })
+  },
+
+  // ---- photo → ImageData：优先直接取 imageData 字段，失败走 canvas 转换 ----
+  async photoToImageData(photo) {
+    const direct = this.toImageDataObj(photo)
+    if (direct) return direct
+    const filePath = this.getPhotoFilePath(photo)
+    if (filePath) {
+      try {
+        return await this.canvasImageDataFromPath(filePath)
+      } catch (e) {
+        console.warn('[notify-agent] canvas convert fail', e)
+      }
+    }
+    return null
+  },
+
   // ---- 扫码配置 ----
   async scanConfig() {
     if (this.data.scanning) return
@@ -216,11 +276,11 @@ export default {
         return
       }
 
-      // 3. 从 photo 提取 ImageData（{data, width, height}）——BarcodeDetector 需要 ImageData
-      const imageData = this.toImageDataObj(photo)
+      // 3. photo → ImageData：优先直接字段（极速档 imageData），失败 canvas 转换（小图/低清档文件路径）
+      const imageData = await this.photoToImageData(photo)
       if (!imageData) {
         console.log('[notify-agent] no imageData in photo', Object.keys(photo || {}))
-        this.setData({ scanning: false, configMsg: '拍照格式不支持' })
+        this.setData({ scanning: false, configMsg: '无法解析拍照结果（无像素数据）' })
         return
       }
 
