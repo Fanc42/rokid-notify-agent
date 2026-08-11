@@ -1,6 +1,26 @@
 <script type="application/json" def>
 {
-  "navigationBarTitleText": "通知中心"
+  "navigationBarTitleText": "通知中心",
+  "description": "显示 Hermes 设备通知中心推送的通知卡片（审批/任务/提醒）。未配置时引导扫码配置服务器；已配置时轮询 localStorage 渲染当前通知（优先级亮度分级），支持镜腿键关闭。",
+  "schema": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "ntf": {
+          "type": "object",
+          "description": "当前通知（title/body/priority/type）；null 表示无通知"
+        },
+        "connected": {
+          "type": "boolean",
+          "description": "SSE/轮询连接状态"
+        },
+        "needConfig": {
+          "type": "boolean",
+          "description": "是否未配置（显示扫码引导）"
+        }
+      }
+    }
+  }
 }
 </script>
 

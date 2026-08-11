@@ -4,13 +4,26 @@
 > 官方文档：https://js.rokid.com/AIUI（打包/分发/API）
 > 官方仓库：https://github.com/jsar-project/AIUI
 
-## 身份与能力
+## Agent Manifest
 
-- **名称**：通知中心（Rokid Glasses 通知 Agent）
-- **版本**：1.0.0
-- **描述**：订阅 hermes-studio 通知中心 SSE 流，在眼镜显示通知卡片（审批/任务/提醒）
-- **权限**：network（SSE 订阅）
-- **运行**：AIUI 智能体（.aix），灵珠平台「应用管理 → 创建应用 → AIUI 智能体」发布
+### Identity
+- **Name**: 通知中心（Rokid Glasses 通知 Agent）
+- **Version**: 1.0.0
+- **Description**: 订阅 hermes-studio 通知中心通知流（SSE + 轮询兜底），在眼镜显示通知卡片（审批/任务/提醒）
+- **Author**: Coco (Hermes)
+
+### Capabilities
+- **Permissions**:
+  - network（SSE/轮询连接通知中心）
+  - camera（扫码配置：BarcodeDetector 识别配置二维码）
+- **Skills**:
+  - 通知订阅（EventSource SSE + fetch 轮询）
+  - 二维码扫码配置（wx.media.createCameraContext + BarcodeDetector）
+  - localStorage 状态共享（app ↔ 页面）
+
+### 运行
+- AIUI 智能体（.aix），灵珠平台「应用管理 → 创建应用 → AIUI 智能体」发布
+- 配置方式：真机扫码（配置页生成二维码）/ 模拟器 DevTools 注入 localStorage
 
 ## 架构
 
