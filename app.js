@@ -5,7 +5,7 @@
 // ⚙️ 配置（真机验证时填写）
 const NOTIFY_URL = 'https://hermes.fanc.link/api/hermes/notifications/stream'
 const DEVICE_ID = 'glasses-rokid-01'
-const DEVICE_TOKEN = 'REPLACE_WITH_DEVICE_TOKEN'
+const DEVICE_TOKEN = '164b28fffb9566df60603966cac17b127d82f299787445f3'
 
 // 通知自动关闭时长（ms）
 const AUTO_CLOSE_MS = 8000
