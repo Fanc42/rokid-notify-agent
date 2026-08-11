@@ -49,6 +49,7 @@ function readJson(key) {
 export default {
   data: {
     ntf: null,            // 当前通知
+    hasNtf: false,        // 是否有通知（模板 ink:if 用布尔，不用对象 truthy）
     connected: false,     // SSE 连接状态
     needConfig: false,    // 未配置 → 扫码引导
     scanning: false,      // 拍照解析中
@@ -71,14 +72,16 @@ export default {
     const configured = !!localStorage.getItem(KEY_CONFIG)
     const ntf = readJson(KEY_CURRENT)
     const connected = localStorage.getItem(KEY_CONNECTED) === 'true'
+    const hasNtf = !!ntf
 
     const sameNtf = this.data.ntf && ntf && this.data.ntf.id === ntf.id
     const stateChanged =
       this.data.needConfig !== !configured ||
       this.data.connected !== connected ||
+      this.data.hasNtf !== hasNtf ||
       !sameNtf
     if (!stateChanged) return
-    this.setData({ ntf, connected, needConfig: !configured })
+    this.setData({ ntf, hasNtf, connected, needConfig: !configured })
   },
 
   // ---- 拍照（AIUI 相机回调式 API 封装，参考 rokid-aiui-lab 真机验证模式）----
@@ -234,7 +237,7 @@ export default {
       } else {
         // 通知模式：关闭当前通知
         localStorage.removeItem(KEY_CURRENT)
-        this.setData({ ntf: null })
+        this.setData({ ntf: null, hasNtf: false })
       }
     }
   },
@@ -258,7 +261,7 @@ export default {
       <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
     </view>
 
-    <view class="ntf-card priority-{{ ntf.priority }}" ink:if="{{ ntf }}">
+    <view class="ntf-card priority-{{ ntf.priority }}" ink:if="{{ hasNtf }}">
       <view class="ntf-header">
         <text class="ntf-type">{{ ntf.type }}</text>
         <text class="ntf-close-hint">按返回键关闭</text>
