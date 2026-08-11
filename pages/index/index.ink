@@ -325,8 +325,9 @@ export default {
     return null
   },
 
-  // ---- 官方链路：data(ArrayBuffer) → Blob → createImageBitmap → 等比缩放 Canvas → ImageData ----
-  async photoToImageDataViaBlob(photo) {
+  // ---- 官方链路：data(ArrayBuffer) → Blob → createImageBitmap → Canvas → ImageData ----
+  // maxSize>0 时等比缩放到最大边 maxSize（≤360 小图识别稳）；maxSize=0 返回原尺寸（二维码细节保留）
+  async photoToImageDataViaBlob(photo, maxSize) {
     try {
       const data = photo.data || photo.arrayBuffer || photo.buffer
       if (!data || typeof data === 'string') return null
@@ -334,12 +335,12 @@ export default {
       const blob = new Blob([data], { type: photo.mimeType || 'image/jpeg' })
       const bitmap = await createImageBitmap(blob)
       if (!bitmap || !bitmap.width || !bitmap.height) return null
-      // 等比缩放：最大边 360（小图识别稳、快；小于 360 不放大防模糊）
-      const maxSize = 360
+      // 等比缩放：仅当 maxSize>0 且超出才缩放（原尺寸保留二维码细节）
+      const limit = Number(maxSize) || 0
       let w = bitmap.width
       let h = bitmap.height
-      if (w > maxSize || h > maxSize) {
-        const scale = Math.min(maxSize / w, maxSize / h)
+      if (limit > 0 && (w > limit || h > limit)) {
+        const scale = Math.min(limit / w, limit / h)
         w = Math.round(w * scale)
         h = Math.round(h * scale)
       }
@@ -353,6 +354,23 @@ export default {
       console.warn('[notify-agent] blob canvas fail', e)
       return null
     }
+  },
+
+  // ---- BarcodeDetector.detect 带超时（大图 detect 慢/卡——3.2s 超时兜底，参考 rokid-aiui-lab）----
+  detectWithTimeout(detector, source, timeoutMs) {
+    return new Promise((resolve) => {
+      let done = false
+      const finish = (v) => { if (!done) { done = true; resolve(v) } }
+      try {
+        Promise.resolve(detector.detect(source))
+          .then((codes) => finish(codes))
+          .catch((err) => { console.warn('[notify-agent] detect err', err); finish(null) })
+        setTimeout(() => finish([]), timeoutMs || 3200)
+      } catch (err) {
+        console.warn('[notify-agent] detect throw', err)
+        finish(null)
+      }
+    })
   },
 
   // ---- 扫码配置 ----
@@ -395,17 +413,35 @@ export default {
         return
       }
 
-      // 3. photo → ImageData：优先直接字段（极速档 imageData），失败 canvas 转换（小图/低清档文件路径）
-      const imageData = await this.photoToImageData(photo)
-      if (!imageData) {
+      // 3. 构建候选 ImageData（多尺寸逐试——原尺寸保留二维码细节，缩放小图 detect 稳/快）
+      const candidates = []
+      const direct = this.toImageDataObj(photo)
+      if (direct) candidates.push({ label: 'direct ' + direct.width + 'x' + direct.height, img: direct })
+      const viaBlob = await this.photoToImageDataViaBlob(photo, 0)
+      if (viaBlob && viaBlob !== direct) {
+        candidates.push({ label: '原尺寸 ' + viaBlob.width + 'x' + viaBlob.height, img: viaBlob })
+        if (viaBlob.width > 360 || viaBlob.height > 360) {
+          const scaled = await this.photoToImageDataViaBlob(photo, 360)
+          if (scaled) candidates.push({ label: '缩放360 ' + scaled.width + 'x' + scaled.height, img: scaled })
+        }
+      }
+      if (candidates.length === 0) {
         console.log('[notify-agent] no imageData in photo', Object.keys(photo || {}))
         this.setData({ scanning: false, configMsg: '无法解析拍照结果（无像素数据）' })
         return
       }
 
-      // 4. 二维码识别
+      // 4. 二维码识别——逐候选试，命中即停
       const detector = new BarcodeDetector({ formats: BARCODE_FORMATS })
-      const codes = await detector.detect(imageData)
+      let codes = null
+      const attempts = []
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i]
+        const found = await this.detectWithTimeout(detector, c.img)
+        attempts.push(c.label + ':' + (found && found.length ? '命中' : '空'))
+        if (found && found.length > 0) { codes = found; break }
+      }
+      console.log('[notify-agent] detect attempts:', attempts.join(' | '))
       if (!codes || codes.length === 0) {
         this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
         return
