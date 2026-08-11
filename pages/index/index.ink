@@ -183,40 +183,63 @@ export default {
     return typeof c === 'string' && c ? c : null
   },
 
-  // ---- canvas 兜底：文件路径 → 缩放绘制到 360×360 画布 → ImageData ----
+  // ---- canvas 兜底：文件路径 → 等比缩放绘制到画布 → ImageData ----
   // 参考 rokid-aiui-lab 真机验证链路（BARCODE_CANVAS_SIZE=360：小图识别稳、快）
+  // ⚠️ 等比缩放（非拉伸）：二维码变形会导致识别失败；小图不放大（防模糊）
   canvasImageDataFromPath(filePath) {
-    const size = 360
+    const maxSize = 360
     return new Promise((resolve, reject) => {
       if (!wx || !wx.createCanvasContext || !wx.canvasGetImageData) {
         reject(new Error('canvas 像素接口不可用'))
         return
       }
-      const ctx = wx.createCanvasContext('ntfDecodeCanvas', this)
-      if (!ctx || !ctx.drawImage) {
-        reject(new Error('canvas.drawImage 不存在'))
-        return
+      const drawAndRead = (w, h) => {
+        // 等比缩放：最大边 maxSize；小于 maxSize 的原图保持原尺寸（放大模糊）
+        let tw = w
+        let th = h
+        if (tw > maxSize || th > maxSize) {
+          const scale = Math.min(maxSize / tw, maxSize / th)
+          tw = Math.round(tw * scale)
+          th = Math.round(th * scale)
+        }
+        const canvasW = Math.max(tw, 1)
+        const canvasH = Math.max(th, 1)
+        const ctx = wx.createCanvasContext('ntfDecodeCanvas', this)
+        if (!ctx || !ctx.drawImage) {
+          reject(new Error('canvas.drawImage 不存在'))
+          return
+        }
+        try {
+          if (ctx.clearRect) ctx.clearRect(0, 0, canvasW, canvasH)
+          ctx.drawImage(filePath, 0, 0, canvasW, canvasH)
+          ctx.draw(false, () => {
+            wx.canvasGetImageData({
+              canvasId: 'ntfDecodeCanvas',
+              x: 0,
+              y: 0,
+              width: canvasW,
+              height: canvasH,
+              success: (res) => {
+                const imageData = this.toImageData(res.data, res.width || canvasW, res.height || canvasH)
+                if (imageData) resolve(imageData)
+                else reject(new Error('canvas 未返回 ImageData'))
+              },
+              fail: (err) => reject(err || new Error('canvasGetImageData fail')),
+            }, this)
+          })
+        } catch (err) {
+          reject(err)
+        }
       }
-      try {
-        if (ctx.clearRect) ctx.clearRect(0, 0, size, size)
-        ctx.drawImage(filePath, 0, 0, size, size)
-        ctx.draw(false, () => {
-          wx.canvasGetImageData({
-            canvasId: 'ntfDecodeCanvas',
-            x: 0,
-            y: 0,
-            width: size,
-            height: size,
-            success: (res) => {
-              const imageData = this.toImageData(res.data, res.width || size, res.height || size)
-              if (imageData) resolve(imageData)
-              else reject(new Error('canvas 未返回 ImageData'))
-            },
-            fail: (err) => reject(err || new Error('canvasGetImageData fail')),
-          }, this)
+      // 原图尺寸（等比缩放需要）；getImageInfo 失败则退化 360 正方形（原行为）
+      if (wx.getImageInfo) {
+        wx.getImageInfo({
+          src: filePath,
+          success: (info) => drawAndRead(Number(info.width) || maxSize, Number(info.height) || maxSize),
+          fail: () => drawAndRead(maxSize, maxSize),
         })
-      } catch (err) {
-        reject(err)
+      } else {
+        drawAndRead(maxSize, maxSize)
       }
     })
   },
