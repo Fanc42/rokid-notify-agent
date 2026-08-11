@@ -8,7 +8,14 @@
       "properties": {
         "ntf": {
           "type": "object",
-          "description": "当前通知（title/body/priority/type）；null 表示无通知"
+          "description": "当前通知（title/body/priority/type）；null 表示无通知",
+          "properties": {
+            "id": { "type": "string" },
+            "title": { "type": "string" },
+            "body": { "type": "string" },
+            "type": { "type": "string" },
+            "priority": { "type": "string", "enum": ["high", "normal", "low"] }
+          }
         },
         "connected": {
           "type": "boolean",
