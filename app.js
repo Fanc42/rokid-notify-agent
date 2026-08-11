@@ -117,9 +117,11 @@ export default {
         try { this._es && this._es.close && this._es.close() } catch (e) { /* ignore */ }
         this._es = null
         // wx.createEventSource 连续失败 ≥3 次 → 切标准 EventSource（模拟器网页端可用）
+        // ⚠️ 2026-08-12 修复：真机 AIUI 环境（typeof wx !== 'undefined'）标准 EventSource 不可用，
+        // 切过去会永远 onError 死循环。仅在非 AIUI 环境（无 wx，如模拟器网页端）才允许切换。
         if (!this._sseUseStd && this._sseErrCount === undefined) this._sseErrCount = 0
         this._sseErrCount = (this._sseErrCount || 0) + 1
-        if (!this._sseUseStd && this._sseErrCount >= 3 && typeof EventSource !== 'undefined') {
+        if (!this._sseUseStd && this._sseErrCount >= 3 && typeof EventSource !== 'undefined' && typeof wx === 'undefined') {
           console.log('[notify-agent] switch to standard EventSource')
           this._sseUseStd = true
           this._retryMs = 1000
@@ -135,11 +137,21 @@ export default {
   },
 
   // ---- 轮询兜底（SSE 不可用/不实时时；短请求拉取，10s 间隔）----
+  // ⚠️ 2026-08-12 退避：蓝牙代理链路断开时（IPC socket 10002 / Network is unreachable），
+  // 保持 10s 间隔会无限重试耗电。检测到系统级网络不可用 → 间隔倍增到 60s 封顶；
+  // 网络恢复（任意成功响应）→ 回落到 10s。
   startPolling(cfg) {
     if (this._pollTimer) return
     this._cfg = cfg
     this._lastTs = this._lastTs || Date.now()
-    this._pollTimer = setInterval(() => this.pollNotifications(), 10000)
+    this._pollIntervalMs = this._pollIntervalMs || 10000
+    this._pollTimer = setInterval(() => this.pollNotifications(), this._pollIntervalMs)
+  },
+
+  _schedulePoll(delayMs) {
+    clearInterval(this._pollTimer)
+    this._pollIntervalMs = delayMs
+    this._pollTimer = setInterval(() => this.pollNotifications(), this._pollIntervalMs)
   },
 
   async pollNotifications() {
@@ -156,6 +168,11 @@ export default {
       }
       const body = await response.json()
       const items = (body && body.notifications) || []
+      // 网络可用（收到任何有效响应）→ 间隔回落到 10s
+      if (this._pollIntervalMs && this._pollIntervalMs !== 10000) {
+        console.log('[notify-agent] poll network recovered, reset interval to 10s')
+        this._schedulePoll(10000)
+      }
       if (items.length === 0) {
         console.log('[notify-agent] poll empty, since', this._lastTs || 0)
         return
@@ -170,6 +187,17 @@ export default {
       localStorage.setItem(KEY_CONNECTED, 'true')
     } catch (e) {
       console.warn('[notify-agent] poll fail', e)
+      const errMsg = String((e && e.message) || e || '')
+      // ⚠️ 2026-08-12 退避：系统级网络不可用（蓝牙代理断开 IPC 10002 / Network is unreachable）
+      // → 间隔倍增 20s→40s→60s 封顶，省电；网络恢复后自动回落 10s。
+      if (/10002|IpcError|IPC socket|Network is unreachable|connect failed/i.test(errMsg)) {
+        const next = Math.min((this._pollIntervalMs || 10000) * 2, 60000)
+        if (next !== (this._pollIntervalMs || 10000)) {
+          console.log('[notify-agent] poll backoff to', next, 'ms (network unavailable)')
+          this._schedulePoll(next)
+        }
+        return
+      }
       // 高丢包网络（实测 30%）下快速重试一次（2s 后补拉，防漏报）
       if (!this._pollRetryTimer) {
         this._pollRetryTimer = setTimeout(() => {
