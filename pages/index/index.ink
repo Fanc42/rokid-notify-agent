@@ -96,19 +96,29 @@ export default {
         return
       }
       const raw = codes[0].rawValue || ''
-      console.log('[notify-agent] qr raw', raw.slice(0, 80))
+      console.log('[notify-agent] qr raw', raw.slice(0, 120))
 
       // 4. 解析配置 JSON（支持直接 JSON 或 hermes-notify://config?json=<encoded>）
+      // ⚠️ 避免 new URL()——AIUI 环境可能不支持标准 URL 构造（报 converting from js 类型错误）
       let cfg = null
-      if (raw.startsWith('{')) {
-        cfg = JSON.parse(raw)
-      } else if (raw.includes('hermes-notify://config')) {
-        const url = new URL(raw)
-        const encoded = url.searchParams.get('json') || ''
-        cfg = JSON.parse(decodeURIComponent(encoded))
+      const trimmed = String(raw).trim()
+      if (trimmed.startsWith('{')) {
+        try { cfg = JSON.parse(trimmed) } catch (e) { console.error('[notify-agent] direct json parse fail', e) }
+      } else {
+        const jsonMark = 'json='
+        const idx = trimmed.indexOf(jsonMark)
+        if (idx >= 0) {
+          const encoded = trimmed.slice(idx + jsonMark.length).split('&')[0]
+          try {
+            cfg = JSON.parse(decodeURIComponent(encoded))
+          } catch (e) {
+            console.error('[notify-agent] encoded json parse fail', e)
+          }
+        }
       }
       if (!cfg || !cfg.sseUrl || !cfg.token) {
-        this.setData({ scanning: false, configMsg: '二维码不是有效配置' })
+        console.log('[notify-agent] invalid qr cfg', cfg)
+        this.setData({ scanning: false, configMsg: '二维码不是有效配置，请重新生成' })
         return
       }
 
