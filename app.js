@@ -170,6 +170,13 @@ export default {
       localStorage.setItem(KEY_CONNECTED, 'true')
     } catch (e) {
       console.warn('[notify-agent] poll fail', e)
+      // 高丢包网络（实测 30%）下快速重试一次（2s 后补拉，防漏报）
+      if (!this._pollRetryTimer) {
+        this._pollRetryTimer = setTimeout(() => {
+          this._pollRetryTimer = null
+          this.pollNotifications()
+        }, 2000)
+      }
     } finally {
       this._polling = false
     }
