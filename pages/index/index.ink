@@ -87,25 +87,34 @@ export default {
     })
   },
 
-  // ---- 从 photo 提取 ImageData（{data, width, height}）----
+  // ---- 从 photo 提取 ImageData（须为真 ImageData 实例——QuickJS 原生桥转换 plain object 报错）----
   toImageDataObj(photo) {
     if (!photo) return null
     const candidates = [photo.imageData, photo.rgba, photo.pixels, photo.frame, photo]
     for (let i = 0; i < candidates.length; i++) {
       const c = candidates[i]
       if (c && c.data && c.width && c.height) {
-        const data = c.data instanceof Uint8ClampedArray ? c.data : new Uint8ClampedArray(c.data)
-        return { data, width: Number(c.width), height: Number(c.height) }
+        const result = this.toImageData(c.data, c.width, c.height)
+        if (result) return result
       }
     }
     if (photo.data && photo.width && photo.height && photo.data.byteLength !== undefined) {
-      return {
-        data: new Uint8ClampedArray(photo.data),
-        width: Number(photo.width),
-        height: Number(photo.height),
-      }
+      return this.toImageData(photo.data, photo.width, photo.height)
     }
     return null
+  },
+
+  toImageData(data, width, height) {
+    const w = Number(width)
+    const h = Number(height)
+    if (!w || !h || !data) return null
+    const clamped = data instanceof Uint8ClampedArray ? data : new Uint8ClampedArray(data)
+    if (clamped.length < w * h * 4) return null
+    // ⚠️ AIUI 环境有 ImageData 构造器——必须返回真 ImageData 实例（原生桥转换）
+    if (typeof ImageData !== 'undefined') {
+      try { return new ImageData(clamped, w, h) } catch (e) { /* fall through */ }
+    }
+    return { data: clamped, width: w, height: h }
   },
 
   // ---- 扫码配置 ----
