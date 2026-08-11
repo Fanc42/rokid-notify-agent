@@ -68,10 +68,10 @@ export default {
     if (this._poll) clearInterval(this._poll)
     // 2s 轮询（省电；通知 8s 窗口内足够）
     this._poll = setInterval(() => this.refresh(), 2000)
-    // 时间/电量：每秒刷新（时间格式 HH:MM 实际每分钟变化，但电量可能变化）
+    // 时间/电量：30s 刷新（省电——HH:MM 分钟级变化，电量变化慢；实时性不需要 1s）
     this.updateStatusBar()
     if (this._statusTimer) clearInterval(this._statusTimer)
-    this._statusTimer = setInterval(() => this.updateStatusBar(), 1000)
+    this._statusTimer = setInterval(() => this.updateStatusBar(), 30000)
   },
 
   onHide() {
