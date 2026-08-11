@@ -65,42 +65,57 @@ export default {
     return null
   },
 
-  // ---- SSE 订阅 ----
+  // ---- SSE 订阅（wx.createEventSource——AIUI 运行时标准；标准 EventSource 仅兜底）----
+  createEventSource(url, handlers) {
+    if (typeof wx !== 'undefined' && wx.createEventSource) {
+      const task = wx.createEventSource({ url, method: 'GET' })
+      if (task.onOpen) task.onOpen(handlers.onOpen)
+      if (task.onMessage) task.onMessage((event) => handlers.onMessage({ data: event && event.data, type: event && event.event }))
+      if (task.onError) task.onError(handlers.onError)
+      return task
+    }
+    // 标准 EventSource 兜底（模拟器/浏览器环境）
+    const es = new EventSource(url)
+    es.onopen = handlers.onOpen
+    es.onmessage = handlers.onMessage
+    es.onerror = handlers.onError
+    return es
+  },
+
   startStream(cfg) {
     if (this._es) return
     const url = `${cfg.sseUrl}/api/hermes/notifications/stream?deviceId=${encodeURIComponent(cfg.deviceId)}&token=${encodeURIComponent(cfg.token)}`
     console.log('[notify-agent] connecting SSE', url)
 
-    const es = new EventSource(url)
-    this._es = es
-
-    es.onopen = () => {
-      console.log('[notify-agent] SSE connected')
-      localStorage.setItem(KEY_CONNECTED, 'true')
-      this._retryMs = 5000
+    const handlers = {
+      onOpen: () => {
+        console.log('[notify-agent] SSE connected')
+        localStorage.setItem(KEY_CONNECTED, 'true')
+        this._retryMs = 5000
+      },
+      onMessage: (event) => {
+        try {
+          const ntf = JSON.parse(event.data)
+          console.log('[notify-agent] received', ntf.type, ntf.priority)
+          if (ntf.ts && ntf.ts > (this._lastTs || 0)) this._lastTs = ntf.ts
+          this.handleNotification(ntf)
+        } catch (e) {
+          console.error('[notify-agent] parse error', e)
+        }
+      },
+      onError: () => {
+        console.error('[notify-agent] SSE error, reconnecting in', this._retryMs)
+        localStorage.setItem(KEY_CONNECTED, 'false')
+        try { this._es && this._es.close && this._es.close() } catch (e) { /* ignore */ }
+        this._es = null
+        // 指数退避重连：5s → 10s → 20s → 40s → 60s 封顶
+        const delay = this._retryMs || 5000
+        this._retryMs = Math.min(delay * 2, 60000)
+        setTimeout(() => this.startStream(cfg), delay)
+      },
     }
 
-    es.onmessage = (event) => {
-      try {
-        const ntf = JSON.parse(event.data)
-        console.log('[notify-agent] received', ntf.type, ntf.priority)
-        if (ntf.ts && ntf.ts > (this._lastTs || 0)) this._lastTs = ntf.ts
-        this.handleNotification(ntf)
-      } catch (e) {
-        console.error('[notify-agent] parse error', e)
-      }
-    }
-
-    es.onerror = () => {
-      console.error('[notify-agent] SSE error, reconnecting in', this._retryMs)
-      localStorage.setItem(KEY_CONNECTED, 'false')
-      es.close()
-      this._es = null
-      // 指数退避重连：5s → 10s → 20s → 40s → 60s 封顶
-      const delay = this._retryMs || 5000
-      this._retryMs = Math.min(delay * 2, 60000)
-      setTimeout(() => this.startStream(cfg), delay)
-    }
+    this._es = this.createEventSource(url, handlers)
   },
 
   // ---- 轮询兜底（蓝牙中继下 SSE 长连可能不实时；30s 短请求拉取）----
