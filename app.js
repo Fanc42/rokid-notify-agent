@@ -1,23 +1,46 @@
-// rokid-notify-agent — 通知中心随身通道
-// 启动即订阅 hermes-studio 通知中心的 SSE 流，收到事件写入 localStorage，
-// 页面轮询读取并渲染通知卡片（AIUI 无全局数据总线，用标准 Web Storage 共享）。
+// rokid-notify-agent — 通知中心随身通道（分发版）
+// 启动读取本地配置（localStorage ntf_config）→ 连接用户自定的通知中心 SSE 流。
+// 无配置时进入「扫码配置」模式：用户扫配置二维码（含 sseUrl/deviceId/token）。
+// 分发友好：每个用户扫码配置自己的服务器地址，无需改代码重新打包。
 
-// ⚙️ 配置（真机验证时填写）
-const NOTIFY_URL = 'https://hermes.fanc.link/api/hermes/notifications/stream'
-const DEVICE_ID = 'glasses-rokid-01'
-const DEVICE_TOKEN = '164b28fffb9566df60603966cac17b127d82f299787445f3'
+// 配置 key
+const KEY_CONFIG = 'ntf_config'       // 用户配置 JSON { v, sseUrl, deviceId, token }
+const KEY_CURRENT = 'ntf_current'      // 当前通知 JSON（页面读取渲染）
+const KEY_CONNECTED = 'ntf_connected'  // SSE 连接状态
 
 // 通知自动关闭时长（ms）
 const AUTO_CLOSE_MS = 8000
 
-// localStorage key
-const KEY_CURRENT = 'ntf_current'      // 当前通知 JSON（页面读取渲染）
-const KEY_CONNECTED = 'ntf_connected'  // SSE 连接状态
+// 配置二维码 URL 前缀（用于提示用户去哪里生成二维码）
+const CONFIG_HELP_URL = 'https://hermes.fanc.link/rokid-config.html'
 
 export default {
   onLaunch: function () {
     console.log('[notify-agent] launch')
-    this.startStream()
+    const cfg = this.loadConfig()
+    if (cfg) {
+      console.log('[notify-agent] config found, connecting')
+      this.startStream(cfg)
+    } else {
+      console.log('[notify-agent] no config, watching for scan result')
+      localStorage.setItem(KEY_CONNECTED, 'false')
+      this.startConfigWatch()
+    }
+  },
+
+  // 无配置时轮询检测 localStorage（AIUI 无全局事件总线/getApp，页面扫码后写配置，
+  // app 层定时发现变化即连接——简单可靠）
+  startConfigWatch() {
+    if (this._configWatch) return
+    this._configWatch = setInterval(() => {
+      const cfg = this.loadConfig()
+      if (cfg) {
+        console.log('[notify-agent] config detected, connecting')
+        clearInterval(this._configWatch)
+        this._configWatch = null
+        this.startStream(cfg)
+      }
+    }, 2000)
   },
 
   onShow: function () {
@@ -28,10 +51,43 @@ export default {
     // 保持订阅（断线重连由 startStream 内部处理）
   },
 
+  // ---- 配置 ----
+  loadConfig() {
+    const raw = localStorage.getItem(KEY_CONFIG)
+    if (!raw) return null
+    try {
+      const cfg = JSON.parse(raw)
+      if (cfg && typeof cfg.sseUrl === 'string' && cfg.sseUrl && typeof cfg.token === 'string' && cfg.token) {
+        return cfg
+      }
+    } catch (e) {
+      console.error('[notify-agent] config parse error', e)
+    }
+    return null
+  },
+
+  // 扫码配置成功后调用：保存 + 立即连接
+  saveConfig(cfg) {
+    if (!cfg || typeof cfg.sseUrl !== 'string' || !cfg.sseUrl || typeof cfg.token !== 'string' || !cfg.token) {
+      console.error('[notify-agent] invalid config', cfg)
+      return false
+    }
+    const normalized = {
+      v: 1,
+      sseUrl: cfg.sseUrl.replace(/\/+$/, ''),          // 去尾斜杠
+      deviceId: cfg.deviceId || 'glasses-rokid-01',
+      token: cfg.token,
+    }
+    localStorage.setItem(KEY_CONFIG, JSON.stringify(normalized))
+    console.log('[notify-agent] config saved', normalized.sseUrl, normalized.deviceId)
+    this.startStream(normalized)
+    return true
+  },
+
   // ---- SSE 订阅 ----
-  startStream() {
+  startStream(cfg) {
     if (this._es) return
-    const url = `${NOTIFY_URL}?deviceId=${DEVICE_ID}&token=${DEVICE_TOKEN}`
+    const url = `${cfg.sseUrl}/api/hermes/notifications/stream?deviceId=${encodeURIComponent(cfg.deviceId)}&token=${encodeURIComponent(cfg.token)}`
     console.log('[notify-agent] connecting SSE', url)
 
     const es = new EventSource(url)
@@ -61,7 +117,7 @@ export default {
       // 指数退避重连：5s → 10s → 20s → 40s → 60s 封顶
       const delay = this._retryMs || 5000
       this._retryMs = Math.min(delay * 2, 60000)
-      setTimeout(() => this.startStream(), delay)
+      setTimeout(() => this.startStream(cfg), delay)
     }
   },
 

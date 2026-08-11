@@ -58,6 +58,24 @@ pages/index/index.ink  # 页面（SFC：<script def> 配置 + <script setup> 逻
 
 ## 通知 Agent 设计
 
+### 分发与配置（多用户自定服务器）
+
+本 agent 是**分发版**——不写死服务器地址，每个用户扫码配置自己的通知服务器：
+
+```
+① 用户访问服务器配置页（如 hermes.fanc.link/rokid-config.html）
+   → 填 sseUrl / deviceId / token → 生成配置二维码
+② 眼镜装好 agent 首次打开 → 显示「未配置，按镜腿键扫码」
+③ 按镜腿键 → 拍照 → BarcodeDetector 识别二维码
+   → 解析配置 JSON → 写入 localStorage(ntf_config) → 自动连接
+```
+
+- **配置 JSON**（二维码载荷 `hermes-notify://config?json=<encoded>`）：
+  `{"v":1,"sseUrl":"https://...","deviceId":"glasses-rokid-01","token":"..."}`
+- **连接机制**：app.js onLaunch 读 `ntf_config` → 有则连接；无则 2s 轮询检测（AIUI 无 getApp/全局事件总线，页面写 localStorage，app 层轮询发现即连接）
+- **配置页**：`hermes-studio packages/client/public/rokid-config.html`（部署后任意用户可访问生成二维码）
+- **重新配置**：清 localStorage `ntf_config` 或重新扫码覆盖
+
 ### 数据流
 ```
 SSE 收到通知 → app.js handleNotification()
@@ -70,15 +88,21 @@ SSE 收到通知 → app.js handleNotification()
 ### 通知卡片（monochrome-green 设计系统）
 - 单色绿 `#40FF5E`，480x352 画布，透明度分级表达层级
 - 优先级：high=全亮+2px 边框 / normal=48% 边框 / low=24% 边框+72% 不透明度
+- **高优先级保护**：当前显示 high 时，低优先级通知不覆盖
 - 连接状态角标（已连接=实心绿 / 重连中=24% 绿）
-- 8 秒自动关闭 + 硬件键立即关闭
+- 8 秒自动关闭 + 硬件键立即关闭（onKeyUp 需 preventDefault 拦截系统返回）
 
-### 配置（app.js 顶部）
-| 配置 | 说明 |
+### 扫码配置实现要点
+- 相机：`wx.media.createCameraContext()` → `takePhoto({ quality:'low', resultType:'imageData' })`
+- 识别：`new BarcodeDetector({ formats:['qr_code'] })` → `detect(imageData)` → `rawValue`
+- 载荷兼容：直接 JSON `{...}` 或 `hermes-notify://config?json=<encoded>`
+
+### 配置存储（localStorage）
+| key | 说明 |
 |:---|:---|
-| `NOTIFY_URL` | 通知中心 SSE 地址（https://hermes.fanc.link/api/hermes/notifications/stream） |
-| `DEVICE_ID` | `glasses-rokid-01` |
-| `DEVICE_TOKEN` | 设备 token（与后端 env `NOTIFICATION_DEVICE_TOKENS` 一致） |
+| `ntf_config` | 用户配置 JSON（{ v, sseUrl, deviceId, token }）——扫码写入 |
+| `ntf_current` | 当前通知 JSON（app.js 写入，页面读取渲染） |
+| `ntf_connected` | SSE 连接状态（'true'/'false'） |
 
 ## 打包与发布
 

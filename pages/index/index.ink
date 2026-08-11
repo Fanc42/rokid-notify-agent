@@ -5,26 +5,34 @@
 </script>
 
 <script setup>
-// 通知卡片页：轮询 localStorage 读取 app.js 写入的当前通知
-// monochrome-green 设计系统：优先级亮度分级，硬件键关闭
+// 通知中心 agent（分发版）
+// 两种模式：
+//  - 已配置：轮询 localStorage 读通知卡片（monochrome-green，优先级亮度分级）
+//  - 未配置：扫码配置模式——拍照扫配置二维码 → 解析 JSON → 保存并连接
+// 扫码链路：cameraContext.takePhoto → BarcodeDetector.detect → JSON.parse → app.saveConfig
 
+import wx from 'wx'
+import { BarcodeDetector } from 'barcode'
+
+const KEY_CONFIG = 'ntf_config'
 const KEY_CURRENT = 'ntf_current'
 const KEY_CONNECTED = 'ntf_connected'
 
-function readNtf() {
-  const raw = localStorage.getItem(KEY_CURRENT)
+const BARCODE_FORMATS = ['qr_code']
+
+function readJson(key) {
+  const raw = localStorage.getItem(key)
   if (!raw) return null
-  try {
-    return JSON.parse(raw)
-  } catch (e) {
-    return null
-  }
+  try { return JSON.parse(raw) } catch (e) { return null }
 }
 
 export default {
   data: {
-    ntf: null,
-    connected: false,
+    ntf: null,            // 当前通知
+    connected: false,     // SSE 连接状态
+    needConfig: false,    // 未配置 → 扫码引导
+    scanning: false,      // 拍照解析中
+    configMsg: '',        // 配置结果提示
   },
 
   onShow() {
@@ -40,47 +48,137 @@ export default {
   },
 
   refresh() {
-    const ntf = readNtf()
+    const configured = !!localStorage.getItem(KEY_CONFIG)
+    const ntf = readJson(KEY_CURRENT)
     const connected = localStorage.getItem(KEY_CONNECTED) === 'true'
+
     const sameNtf = this.data.ntf && ntf && this.data.ntf.id === ntf.id
-    if (sameNtf && this.data.connected === connected) return
-    this.setData({ ntf, connected })
+    const stateChanged =
+      this.data.needConfig !== !configured ||
+      this.data.connected !== connected ||
+      !sameNtf
+    if (!stateChanged) return
+    this.setData({ ntf, connected, needConfig: !configured })
   },
 
-  // 关闭当前通知（硬件键：镜腿单击=Enter/GlobalHook，双击=Backspace）
+  // ---- 扫码配置 ----
+  async scanConfig() {
+    if (this.data.scanning) return
+    this.setData({ scanning: true, configMsg: '拍照解析中…' })
+
+    try {
+      // 1. 获取相机
+      let camera = this.cameraContext
+      if (!camera || typeof camera.takePhoto !== 'function') {
+        if (wx.media && typeof wx.media.createCameraContext === 'function') {
+          camera = wx.media.createCameraContext()
+          this.cameraContext = camera
+        }
+      }
+      if (!camera || typeof camera.takePhoto !== 'function') {
+        this.setData({ scanning: false, configMsg: '相机不可用' })
+        return
+      }
+
+      // 2. 拍照（低清 + imageData 输出，供 BarcodeDetector 直接识别）
+      const photo = await camera.takePhoto({ quality: 'low', resultType: 'imageData', dataType: 'imageData' })
+      const imageData = photo && (photo.imageData || photo.image || photo)
+      if (!imageData || !imageData.data) {
+        this.setData({ scanning: false, configMsg: '拍照数据无效' })
+        return
+      }
+
+      // 3. 二维码识别
+      const detector = new BarcodeDetector({ formats: BARCODE_FORMATS })
+      const codes = await detector.detect(imageData)
+      if (!codes || codes.length === 0) {
+        this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
+        return
+      }
+      const raw = codes[0].rawValue || ''
+      console.log('[notify-agent] qr raw', raw.slice(0, 80))
+
+      // 4. 解析配置 JSON（支持直接 JSON 或 hermes-notify://config?json=<encoded>）
+      let cfg = null
+      if (raw.startsWith('{')) {
+        cfg = JSON.parse(raw)
+      } else if (raw.includes('hermes-notify://config')) {
+        const url = new URL(raw)
+        const encoded = url.searchParams.get('json') || ''
+        cfg = JSON.parse(decodeURIComponent(encoded))
+      }
+      if (!cfg || !cfg.sseUrl || !cfg.token) {
+        this.setData({ scanning: false, configMsg: '二维码不是有效配置' })
+        return
+      }
+
+      // 5. 保存配置（AIUI 无 getApp——页面直接写 localStorage，app 层 2s 轮询发现后连接）
+      const normalized = {
+        v: 1,
+        sseUrl: String(cfg.sseUrl).replace(/\/+$/, ''),
+        deviceId: cfg.deviceId || 'glasses-rokid-01',
+        token: cfg.token,
+      }
+      localStorage.setItem(KEY_CONFIG, JSON.stringify(normalized))
+      this.setData({
+        scanning: false,
+        configMsg: '配置已保存，正在连接…',
+      })
+    } catch (e) {
+      console.error('[notify-agent] scan error', e)
+      this.setData({ scanning: false, configMsg: '扫码失败：' + String(e).slice(0, 40) })
+    }
+  },
+
+  // 硬件键：镜腿单击=Enter/GlobalHook，双击=Backspace
   onKeyUp(event) {
     if (event.code === 'GlobalHook' || event.code === 'Enter' || event.code === 'Backspace' || event.code === 'Escape') {
       // 必须 preventDefault——否则 Backspace 会触发系统「返回上一页」导致 agent 退出
       event.preventDefault()
-      localStorage.removeItem(KEY_CURRENT)
-      this.setData({ ntf: null })
+      if (this.data.needConfig) {
+        // 配置模式：镜腿键触发扫码
+        this.scanConfig()
+      } else {
+        // 通知模式：关闭当前通知
+        localStorage.removeItem(KEY_CURRENT)
+        this.setData({ ntf: null })
+      }
     }
   },
 }
 </script>
 
 <page>
-  <!-- 连接状态角标 -->
-  <view class="status-bar">
-    <view class="status-dot {{ connected ? 'on' : 'off' }}"></view>
-    <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
+  <!-- 未配置：扫码引导 -->
+  <view class="config-panel" ink:if="{{ needConfig }}">
+    <text class="config-title">通知中心 · 未配置</text>
+    <text class="config-hint">按镜腿键扫描配置二维码</text>
+    <text class="config-sub">在服务器打开配置页生成二维码：</text>
+    <text class="config-url">hermes.fanc.link/rokid-config.html</text>
+    <text class="config-status {{ scanning ? 'active' : '' }}">{{ configMsg || (scanning ? '拍照解析中…' : '') }}</text>
   </view>
 
-  <!-- 通知卡片 -->
-  <view class="ntf-card priority-{{ ntf.priority }}" ink:if="{{ ntf }}">
-    <view class="ntf-header">
-      <text class="ntf-type">{{ ntf.type }}</text>
-      <text class="ntf-close-hint">按返回键关闭</text>
+  <!-- 已配置：连接状态角标 + 通知卡片 -->
+  <block ink:else>
+    <view class="status-bar">
+      <view class="status-dot {{ connected ? 'on' : 'off' }}"></view>
+      <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
     </view>
-    <text class="ntf-title">{{ ntf.title }}</text>
-    <text class="ntf-body">{{ ntf.body }}</text>
-  </view>
 
-  <!-- 空态 -->
-  <view class="empty" ink:else>
-    <text class="empty-icon">●</text>
-    <text class="empty-text">暂无通知</text>
-  </view>
+    <view class="ntf-card priority-{{ ntf.priority }}" ink:if="{{ ntf }}">
+      <view class="ntf-header">
+        <text class="ntf-type">{{ ntf.type }}</text>
+        <text class="ntf-close-hint">按返回键关闭</text>
+      </view>
+      <text class="ntf-title">{{ ntf.title }}</text>
+      <text class="ntf-body">{{ ntf.body }}</text>
+    </view>
+
+    <view class="empty" ink:else>
+      <text class="empty-icon">●</text>
+      <text class="empty-text">暂无通知</text>
+    </view>
+  </block>
 </page>
 
 <style>
@@ -92,6 +190,54 @@ page {
   overflow: hidden;
 }
 
+/* ---- 配置面板 ---- */
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 24px;
+}
+
+.config-title {
+  color: #40FF5E;
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 14px;
+}
+
+.config-hint {
+  color: #40FF5E;
+  font-size: 16px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(64, 255, 94, 0.48);
+  border-radius: 8px;
+  padding: 8px 16px;
+}
+
+.config-sub {
+  color: rgba(64, 255, 94, 0.48);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.config-url {
+  color: rgba(64, 255, 94, 0.72);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.config-status {
+  color: rgba(64, 255, 94, 0.72);
+  font-size: 13px;
+  margin-top: 14px;
+}
+.config-status.active {
+  color: #40FF5E;
+}
+
+/* ---- 状态角标 ---- */
 .status-bar {
   display: flex;
   flex-direction: row;
@@ -117,6 +263,7 @@ page {
   font-size: 12px;
 }
 
+/* ---- 通知卡片 ---- */
 .ntf-card {
   margin: 4px 12px;
   padding: 14px 16px;
