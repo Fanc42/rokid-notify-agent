@@ -128,12 +128,17 @@ export default {
   },
 
   async pollNotifications() {
+    if (this._polling) return
+    this._polling = true
     const cfg = this._cfg
-    if (!cfg) return
+    if (!cfg) { this._polling = false; return }
     try {
       const url = `${cfg.sseUrl}/api/hermes/notifications/poll?deviceId=${encodeURIComponent(cfg.deviceId)}&token=${encodeURIComponent(cfg.token)}&since=${this._lastTs || 0}`
-      const response = await fetch(url, { cache: 'no-store' })
-      if (!response.ok) return
+      const response = await this.fetchWithTimeout(url, 8000, { cache: 'no-store' })
+      if (!response || !response.ok) {
+        console.warn('[notify-agent] poll http fail', response && response.status)
+        return
+      }
       const body = await response.json()
       const items = (body && body.notifications) || []
       if (items.length === 0) {
@@ -149,8 +154,34 @@ export default {
       if (maxTs > (this._lastTs || 0)) this._lastTs = maxTs
       localStorage.setItem(KEY_CONNECTED, 'true')
     } catch (e) {
-      console.error('[notify-agent] poll error', e)
+      console.warn('[notify-agent] poll fail', e)
+    } finally {
+      this._polling = false
     }
+  },
+
+  // ---- fetch 带超时（防挂起）+ AbortController（可用时）----
+  fetchWithTimeout(url, timeoutMs, options) {
+    return new Promise((resolve, reject) => {
+      let done = false
+      const finish = (fn, v) => { if (!done) { done = true; fn(v) } }
+      let timer = null
+      try {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+        const opts = Object.assign({}, options || {})
+        if (controller) opts.signal = controller.signal
+        timer = setTimeout(() => {
+          try { controller && controller.abort() } catch (e) { /* ignore */ }
+          finish(reject, new Error('poll timeout'))
+        }, timeoutMs || 8000)
+        fetch(url, opts)
+          .then((res) => { clearTimeout(timer); finish(resolve, res) })
+          .catch((err) => { clearTimeout(timer); finish(reject, err) })
+      } catch (err) {
+        clearTimeout(timer)
+        finish(reject, err)
+      }
+    })
   },
 
   // ---- 通知处理 ----
