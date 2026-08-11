@@ -95,19 +95,18 @@ export default {
     })
   },
 
-  // ---- 拍照（AIUI 相机回调式 API 封装，参考 rokid-aiui-lab 真机验证模式）----
-  takePhotoCallback(camera) {
+  // ---- 拍照（AIUI 相机回调式 API；多档参数降级，参考 rokid-aiui-lab 真机验证模式）----
+  // 3 档从全参数到最简逐档尝试：环境（真机/模拟器/网页端）支持程度不同，
+  // 单档参数在部分环境报「拍照格式不支持」——降级可兜底。
+  takePhotoOnce(camera, options) {
     return new Promise((resolve, reject) => {
       let done = false
       const finish = (fn, payload) => { if (!done) { done = true; fn(payload) } }
       try {
-        const ret = camera.takePhoto({
-          quality: 'low',
-          resultType: 'imageData',
-          dataType: 'imageData',
+        const ret = camera.takePhoto(Object.assign({}, options, {
           success: (res) => finish(resolve, res),
           fail: (err) => finish(reject, err),
-        })
+        }))
         if (ret && typeof ret.then === 'function') {
           ret.then((res) => finish(resolve, res)).catch((err) => finish(reject, err))
         } else if (ret && typeof ret === 'object' && Object.keys(ret).length > 0) {
@@ -118,6 +117,32 @@ export default {
       } catch (err) {
         finish(reject, err)
       }
+    })
+  },
+
+  takePhotoCallback(camera) {
+    return new Promise((resolve, reject) => {
+      (async () => {
+        const profiles = [
+          { name: '极速', options: { quality: 'low', width: 512, height: 384, maxWidth: 512, maxHeight: 384, size: 'small', resolution: 'low', mode: 'fast', format: 'rgba', imageFormat: 'rgba', output: 'imageData', resultType: 'imageData', dataType: 'imageData', returnImageData: true } },
+          { name: '小图', options: { quality: 'low', width: 640, height: 480, maxWidth: 640, maxHeight: 480, size: 'small', resolution: 'low' } },
+          { name: '低清', options: { quality: 'low' } },
+        ]
+        let lastErr = null
+        for (let i = 0; i < profiles.length; i++) {
+          const profile = profiles[i]
+          try {
+            const photo = await this.takePhotoOnce(camera, profile.options)
+            console.log('[notify-agent] takePhoto ok', profile.name)
+            resolve(photo)
+            return
+          } catch (err) {
+            lastErr = err
+            console.warn('[notify-agent] takePhoto profile fail', profile.name, err)
+          }
+        }
+        reject(lastErr || new Error('takePhoto failed'))
+      })()
     })
   },
 
