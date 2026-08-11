@@ -61,6 +61,53 @@ export default {
     this.setData({ ntf, connected, needConfig: !configured })
   },
 
+  // ---- 拍照（AIUI 相机回调式 API 封装，参考 rokid-aiui-lab 真机验证模式）----
+  takePhotoCallback(camera) {
+    return new Promise((resolve, reject) => {
+      let done = false
+      const finish = (fn, payload) => { if (!done) { done = true; fn(payload) } }
+      try {
+        const ret = camera.takePhoto({
+          quality: 'low',
+          resultType: 'imageData',
+          dataType: 'imageData',
+          success: (res) => finish(resolve, res),
+          fail: (err) => finish(reject, err),
+        })
+        if (ret && typeof ret.then === 'function') {
+          ret.then((res) => finish(resolve, res)).catch((err) => finish(reject, err))
+        } else if (ret && typeof ret === 'object' && Object.keys(ret).length > 0) {
+          finish(resolve, ret)
+        } else if (!ret) {
+          setTimeout(() => finish(reject, new Error('takePhoto no result')), 12000)
+        }
+      } catch (err) {
+        finish(reject, err)
+      }
+    })
+  },
+
+  // ---- 从 photo 提取 ImageData（{data, width, height}）----
+  toImageDataObj(photo) {
+    if (!photo) return null
+    const candidates = [photo.imageData, photo.rgba, photo.pixels, photo.frame, photo]
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i]
+      if (c && c.data && c.width && c.height) {
+        const data = c.data instanceof Uint8ClampedArray ? c.data : new Uint8ClampedArray(c.data)
+        return { data, width: Number(c.width), height: Number(c.height) }
+      }
+    }
+    if (photo.data && photo.width && photo.height && photo.data.byteLength !== undefined) {
+      return {
+        data: new Uint8ClampedArray(photo.data),
+        width: Number(photo.width),
+        height: Number(photo.height),
+      }
+    }
+    return null
+  },
+
   // ---- 扫码配置 ----
   async scanConfig() {
     if (this.data.scanning) return
@@ -80,20 +127,24 @@ export default {
         return
       }
 
-      // 2. 拍照——takePhoto 返回 { mimeType, data }（字节数组），不是 imageData
-      const photo = await camera.takePhoto({ quality: 'low' })
-      if (!photo || !photo.data) {
-        console.log('[notify-agent] takePhoto no data', photo)
-        this.setData({ scanning: false, configMsg: '拍照数据无效' })
+      // 2. 拍照——AIUI 相机是回调式 API（success/fail），不是 Promise
+      const photo = await this.takePhotoCallback(camera)
+      if (!photo) {
+        this.setData({ scanning: false, configMsg: '拍照无结果' })
         return
       }
 
-      // 3. 构造 Blob 喂 BarcodeDetector（官方 sample 用法：detect(blob)）
-      const blob = new Blob([photo.data], {
-        type: photo.mimeType || 'image/jpeg',
-      })
+      // 3. 从 photo 提取 ImageData（{data, width, height}）——BarcodeDetector 需要 ImageData
+      const imageData = this.toImageDataObj(photo)
+      if (!imageData) {
+        console.log('[notify-agent] no imageData in photo', Object.keys(photo || {}))
+        this.setData({ scanning: false, configMsg: '拍照格式不支持' })
+        return
+      }
+
+      // 4. 二维码识别
       const detector = new BarcodeDetector({ formats: BARCODE_FORMATS })
-      const codes = await detector.detect(blob)
+      const codes = await detector.detect(imageData)
       if (!codes || codes.length === 0) {
         this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
         return
