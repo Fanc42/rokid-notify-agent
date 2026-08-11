@@ -58,6 +58,9 @@ export default {
     needConfig: false,    // 未配置 → 扫码引导
     scanning: false,      // 拍照解析中
     configMsg: '',        // 配置结果提示
+    timeText: '',         // 右下角时间 HH:MM
+    battery: 0,           // 右下角电量百分比（0-100；获取失败显示 --）
+    batteryKnown: false,  // 电量是否成功读取
   },
 
   onShow() {
@@ -65,11 +68,43 @@ export default {
     if (this._poll) clearInterval(this._poll)
     // 2s 轮询（省电；通知 8s 窗口内足够）
     this._poll = setInterval(() => this.refresh(), 2000)
+    // 时间/电量：每秒刷新（时间格式 HH:MM 实际每分钟变化，但电量可能变化）
+    this.updateStatusBar()
+    if (this._statusTimer) clearInterval(this._statusTimer)
+    this._statusTimer = setInterval(() => this.updateStatusBar(), 1000)
   },
 
   onHide() {
     if (this._poll) clearInterval(this._poll)
     this._poll = null
+    if (this._statusTimer) clearInterval(this._statusTimer)
+    this._statusTimer = null
+  },
+
+  // 右下角状态栏：时间（HH:MM）+ 电量（wx.getSystemInfoSync 防御性读取）
+  updateStatusBar() {
+    const d = new Date()
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    const timeText = hh + ':' + mm
+    let battery = this.data.battery
+    let batteryKnown = this.data.batteryKnown
+    try {
+      if (typeof wx !== 'undefined' && wx.getSystemInfoSync) {
+        const info = wx.getSystemInfoSync()
+        const raw = info && (info.battery || info.batteryLevel || info.battery_level)
+        if (raw !== undefined && raw !== null && raw !== '') {
+          const num = Number(raw)
+          if (Number.isFinite(num)) {
+            battery = Math.max(0, Math.min(100, Math.round(num)))
+            batteryKnown = true
+          }
+        }
+      }
+    } catch (e) { /* 环境不支持则保留上次值 */ }
+    if (timeText !== this.data.timeText || battery !== this.data.battery || batteryKnown !== this.data.batteryKnown) {
+      this.setData({ timeText, battery, batteryKnown })
+    }
   },
 
   refresh() {
@@ -567,26 +602,29 @@ export default {
     <text class="config-status {{ scanning ? 'active' : '' }}">{{ configMsg || (scanning ? '拍照解析中…' : '') }}</text>
   </view>
 
-  <!-- 已配置：连接状态角标 + 通知卡片 -->
-  <!-- 已配置：连接状态角标 + 通知卡片（ink-core 不认识 <block>——用 view 包裹） -->
+  <!-- 已配置：通知卡片 + 底部状态栏（左下连接状态 / 右下时间电量） -->
+  <!-- 已配置：通知卡片 + 底部状态栏（左下连接状态 / 右下时间电量）（ink-core 不认识 <block>——用 view 包裹） -->
   <view class="main-body" ink:else>
-    <view class="status-bar">
-      <view class="status-dot {{ connected ? 'on' : 'off' }}"></view>
-      <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
-    </view>
-
-    <view class="ntf-card priority-{{ ntfPriority }}" ink:if="{{ hasNtf }}">
-      <view class="ntf-header">
-        <text class="ntf-type">{{ ntfType }}</text>
-        <text class="ntf-close-hint">按返回键关闭</text>
+    <view class="ntf-area">
+      <view class="ntf-card priority-{{ ntfPriority }}" ink:if="{{ hasNtf }}">
+        <view class="ntf-header">
+          <text class="ntf-type">{{ ntfType }}</text>
+          <text class="ntf-close-hint">按返回键关闭</text>
+        </view>
+        <text class="ntf-title">{{ ntfTitle }}</text>
+        <text class="ntf-body">{{ ntfBody }}</text>
       </view>
-      <text class="ntf-title">{{ ntfTitle }}</text>
-      <text class="ntf-body">{{ ntfBody }}</text>
     </view>
 
-    <view class="empty" ink:else>
-      <text class="empty-icon">●</text>
-      <text class="empty-text">暂无通知</text>
+    <view class="status-bar">
+      <view class="status-left">
+        <view class="status-dot {{ connected ? 'on' : 'off' }}"></view>
+        <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
+      </view>
+      <view class="status-right">
+        <text class="status-power">{{ batteryKnown ? battery + '%' : '--' }}</text>
+        <text class="status-time">{{ timeText }}</text>
+      </view>
     </view>
   </view>
 </page>
@@ -647,18 +685,43 @@ page {
   color: #40FF5E;
 }
 
-/* ---- 状态角标 ---- */
+/* ---- 主区域 + 底部状态栏 ---- */
 .main-body {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
+/* 通知卡片区域：垂直居中，无通知时留白（不再显示「暂无通知」圆点） */
+.ntf-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* ---- 底部状态栏（左下连接状态 / 右下时间电量）---- */
 .status-bar {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: row;
   align-items: center;
-  padding: 8px 12px;
+  justify-content: space-between;
+  padding: 6px 14px 8px;
+}
+
+.status-left {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.status-right {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
 }
 
 .status-dot {
@@ -677,6 +740,17 @@ page {
 .status-text {
   color: rgba(64, 255, 94, 0.48);
   font-size: 12px;
+}
+
+.status-power {
+  color: rgba(64, 255, 94, 0.48);
+  font-size: 12px;
+}
+
+.status-time {
+  color: #40FF5E;
+  font-size: 14px;
+  font-weight: bold;
 }
 
 /* ---- 通知卡片 ---- */
@@ -733,24 +807,5 @@ page {
   color: rgba(64, 255, 94, 0.72);
   font-size: 14px;
   line-height: 20px;
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 260px;
-}
-
-.empty-icon {
-  color: rgba(64, 255, 94, 0.24);
-  font-size: 32px;
-  margin-bottom: 10px;
-}
-
-.empty-text {
-  color: rgba(64, 255, 94, 0.24);
-  font-size: 16px;
 }
 </style>
