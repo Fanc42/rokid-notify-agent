@@ -80,17 +80,20 @@ export default {
         return
       }
 
-      // 2. 拍照（低清 + imageData 输出，供 BarcodeDetector 直接识别）
-      const photo = await camera.takePhoto({ quality: 'low', resultType: 'imageData', dataType: 'imageData' })
-      const imageData = photo && (photo.imageData || photo.image || photo)
-      if (!imageData || !imageData.data) {
+      // 2. 拍照——takePhoto 返回 { mimeType, data }（字节数组），不是 imageData
+      const photo = await camera.takePhoto({ quality: 'low' })
+      if (!photo || !photo.data) {
+        console.log('[notify-agent] takePhoto no data', photo)
         this.setData({ scanning: false, configMsg: '拍照数据无效' })
         return
       }
 
-      // 3. 二维码识别
+      // 3. 构造 Blob 喂 BarcodeDetector（官方 sample 用法：detect(blob)）
+      const blob = new Blob([photo.data], {
+        type: photo.mimeType || 'image/jpeg',
+      })
       const detector = new BarcodeDetector({ formats: BARCODE_FORMATS })
-      const codes = await detector.detect(imageData)
+      const codes = await detector.detect(blob)
       if (!codes || codes.length === 0) {
         this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
         return
