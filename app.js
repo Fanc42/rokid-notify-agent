@@ -73,13 +73,24 @@ export default {
       return
     }
 
+    // 高优先级保护：当前显示 high 时，低优先级通知不覆盖（只刷新显示时长）
+    const current = this._currentNtf
+    const PRIORITY_RANK = { high: 3, normal: 2, low: 1 }
+    const incomingRank = PRIORITY_RANK[ntf.priority] || 2
+    if (current && (PRIORITY_RANK[current.priority] || 2) > incomingRank) {
+      console.log('[notify-agent] keep high-priority', current.id, 'ignore', ntf.id)
+      return
+    }
+
     // 写入 localStorage 供页面渲染
+    this._currentNtf = ntf
     localStorage.setItem(KEY_CURRENT, JSON.stringify(ntf))
 
     // 重置自动关闭定时器
     if (this._closeTimer) clearTimeout(this._closeTimer)
     this._closeTimer = setTimeout(() => {
       console.log('[notify-agent] auto close after', AUTO_CLOSE_MS)
+      this._currentNtf = null
       localStorage.removeItem(KEY_CURRENT)
     }, AUTO_CLOSE_MS)
   },

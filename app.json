@@ -3,6 +3,9 @@
     "pages/index/index"
   ],
   "window": {
-    "navigationBarTitleText": "通知中心"
+    "navigationBarTitleText": "通知中心",
+    "viewport": {
+      "width": "device-width"
+    }
   }
 }

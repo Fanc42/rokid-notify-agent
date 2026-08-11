@@ -30,7 +30,8 @@ export default {
   onShow() {
     this.refresh()
     if (this._poll) clearInterval(this._poll)
-    this._poll = setInterval(() => this.refresh(), 1000)
+    // 2s 轮询（省电；通知 8s 窗口内足够）
+    this._poll = setInterval(() => this.refresh(), 2000)
   },
 
   onHide() {
@@ -49,6 +50,8 @@ export default {
   // 关闭当前通知（硬件键：镜腿单击=Enter/GlobalHook，双击=Backspace）
   onKeyUp(event) {
     if (event.code === 'GlobalHook' || event.code === 'Enter' || event.code === 'Backspace' || event.code === 'Escape') {
+      // 必须 preventDefault——否则 Backspace 会触发系统「返回上一页」导致 agent 退出
+      event.preventDefault()
       localStorage.removeItem(KEY_CURRENT)
       this.setData({ ntf: null })
     }
