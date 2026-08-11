@@ -274,7 +274,8 @@ export default {
   </view>
 
   <!-- 已配置：连接状态角标 + 通知卡片 -->
-  <block ink:else>
+  <!-- 已配置：连接状态角标 + 通知卡片（ink-core 不认识 <block>——用 view 包裹） -->
+  <view class="main-body" ink:else>
     <view class="status-bar">
       <view class="status-dot {{ connected ? 'on' : 'off' }}"></view>
       <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
@@ -293,7 +294,7 @@ export default {
       <text class="empty-icon">●</text>
       <text class="empty-text">暂无通知</text>
     </view>
-  </block>
+  </view>
 </page>
 
 <style>
@@ -353,6 +354,12 @@ page {
 }
 
 /* ---- 状态角标 ---- */
+.main-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .status-bar {
   display: flex;
   flex-direction: row;
