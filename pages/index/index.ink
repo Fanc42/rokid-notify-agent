@@ -183,6 +183,60 @@ export default {
     return typeof c === 'string' && c ? c : null
   },
 
+  // ---- 从 photo 取 base64（极速档返回 {data, mimeType}——data 可能是 base64 字符串或字节）----
+  getPhotoBase64(photo) {
+    if (!photo) return ''
+    const candidates = [photo.base64, photo.imageBase64, photo.dataBase64]
+    for (let i = 0; i < candidates.length; i++) {
+      const text = String(candidates[i] || '').trim()
+      if (text) return this.stripDataUrl(text)
+    }
+    if (typeof photo.data === 'string' && photo.data) return this.stripDataUrl(photo.data.trim())
+    // 字节（ArrayBuffer/Uint8Array）→ base64
+    const bytes = photo.data instanceof ArrayBuffer || (photo.data && photo.data.byteLength !== undefined)
+      ? photo.data : null
+    if (bytes) {
+      const b64 = this.bytesToBase64(bytes)
+      if (b64) return b64
+    }
+    return ''
+  },
+
+  stripDataUrl(text) {
+    const idx = text.indexOf(',')
+    if (idx >= 0 && /^data:[\w/+.-]+;base64/i.test(text.slice(0, idx + 1))) return text.slice(idx + 1)
+    return text
+  },
+
+  bytesToBase64(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+    const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    let out = ''
+    for (let i = 0; i < u8.length; i += 3) {
+      const b0 = u8[i]
+      const b1 = i + 1 < u8.length ? u8[i + 1] : 0
+      const b2 = i + 2 < u8.length ? u8[i + 2] : 0
+      out += B64[b0 >> 2]
+      out += B64[((b0 & 3) << 4) | (b1 >> 4)]
+      out += i + 1 < u8.length ? B64[((b1 & 15) << 2) | (b2 >> 6)] : '='
+      out += i + 2 < u8.length ? B64[b2 & 63] : '='
+    }
+    return out
+  },
+
+  // ---- photo → data URL（canvas.drawImage 支持；mimeType 缺失时按前缀猜）----
+  photoToDataUrl(photo) {
+    const base64 = this.getPhotoBase64(photo)
+    if (!base64) return ''
+    let mime = photo.mimeType || photo.mime || ''
+    if (!mime) {
+      if (base64.slice(0, 8) === 'iVBORw0K') mime = 'image/png'
+      else if (base64.slice(0, 5) === 'UklGR') mime = 'image/webp'
+      else mime = 'image/jpeg'
+    }
+    return 'data:' + mime + ';base64,' + base64
+  },
+
   // ---- canvas 兜底：文件路径 → 等比缩放绘制到画布 → ImageData ----
   // 参考 rokid-aiui-lab 真机验证链路（BARCODE_CANVAS_SIZE=360：小图识别稳、快）
   // ⚠️ 等比缩放（非拉伸）：二维码变形会导致识别失败；小图不放大（防模糊）
@@ -248,12 +302,22 @@ export default {
   async photoToImageData(photo) {
     const direct = this.toImageDataObj(photo)
     if (direct) return direct
+    // 文件路径（tempFilePath）→ canvas
     const filePath = this.getPhotoFilePath(photo)
     if (filePath) {
       try {
         return await this.canvasImageDataFromPath(filePath)
       } catch (e) {
-        console.warn('[notify-agent] canvas convert fail', e)
+        console.warn('[notify-agent] canvas convert (path) fail', e)
+      }
+    }
+    // base64/dataUrl（极速档返回 {data, mimeType}）→ canvas
+    const dataUrl = this.photoToDataUrl(photo)
+    if (dataUrl) {
+      try {
+        return await this.canvasImageDataFromPath(dataUrl)
+      } catch (e) {
+        console.warn('[notify-agent] canvas convert (dataUrl) fail', e)
       }
     }
     return null
