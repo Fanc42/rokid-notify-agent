@@ -6,17 +6,10 @@
     "data": {
       "type": "object",
       "properties": {
-        "ntf": {
-          "type": "object",
-          "description": "当前通知（title/body/priority/type）；null 表示无通知",
-          "properties": {
-            "id": { "type": "string" },
-            "title": { "type": "string" },
-            "body": { "type": "string" },
-            "type": { "type": "string" },
-            "priority": { "type": "string", "enum": ["high", "normal", "low"] }
-          }
-        },
+        "ntfTitle": { "type": "string", "description": "当前通知标题" },
+        "ntfBody": { "type": "string", "description": "当前通知正文" },
+        "ntfType": { "type": "string", "description": "通知类型" },
+        "ntfPriority": { "type": "string", "enum": ["high", "normal", "low"], "description": "通知优先级" },
         "connected": {
           "type": "boolean",
           "description": "SSE/轮询连接状态"
@@ -55,8 +48,11 @@ function readJson(key) {
 
 export default {
   data: {
-    ntf: null,            // 当前通知
-    hasNtf: false,        // 是否有通知（模板 ink:if 用布尔，不用对象 truthy）
+    ntfTitle: '',         // 当前通知标题（扁平字段——ink-core 模板不支持嵌套路径）
+    ntfBody: '',
+    ntfType: '',
+    ntfPriority: 'normal',
+    hasNtf: false,        // 是否有通知（模板 ink:if 用布尔）
     connected: false,     // SSE 连接状态
     needConfig: false,    // 未配置 → 扫码引导
     scanning: false,      // 拍照解析中
@@ -81,14 +77,22 @@ export default {
     const connected = localStorage.getItem(KEY_CONNECTED) === 'true'
     const hasNtf = !!ntf
 
-    const sameNtf = this.data.ntf && ntf && this.data.ntf.id === ntf.id
+    const sameId = hasNtf && ntf && this.data.ntfTitle === ntf.title && this.data.ntfBody === ntf.body
     const stateChanged =
       this.data.needConfig !== !configured ||
       this.data.connected !== connected ||
       this.data.hasNtf !== hasNtf ||
-      !sameNtf
+      !sameId
     if (!stateChanged) return
-    this.setData({ ntf, hasNtf, connected, needConfig: !configured })
+    this.setData({
+      ntfTitle: ntf ? (ntf.title || '') : '',
+      ntfBody: ntf ? (ntf.body || '') : '',
+      ntfType: ntf ? (ntf.type || '') : '',
+      ntfPriority: ntf ? (ntf.priority || 'normal') : 'normal',
+      hasNtf,
+      connected,
+      needConfig: !configured,
+    })
   },
 
   // ---- 拍照（AIUI 相机回调式 API 封装，参考 rokid-aiui-lab 真机验证模式）----
@@ -252,7 +256,7 @@ export default {
       } else {
         // 通知模式：关闭当前通知
         localStorage.removeItem(KEY_CURRENT)
-        this.setData({ ntf: null, hasNtf: false })
+        this.setData({ ntfTitle: '', ntfBody: '', ntfType: '', hasNtf: false })
       }
     }
   },
@@ -276,13 +280,13 @@ export default {
       <text class="status-text">{{ connected ? '已连接' : '重连中' }}</text>
     </view>
 
-    <view class="ntf-card priority-{{ ntf.priority }}" ink:if="{{ hasNtf }}">
+    <view class="ntf-card priority-{{ ntfPriority }}" ink:if="{{ hasNtf }}">
       <view class="ntf-header">
-        <text class="ntf-type">{{ ntf.type }}</text>
+        <text class="ntf-type">{{ ntfType }}</text>
         <text class="ntf-close-hint">按返回键关闭</text>
       </view>
-      <text class="ntf-title">{{ ntf.title }}</text>
-      <text class="ntf-body">{{ ntf.body }}</text>
+      <text class="ntf-title">{{ ntfTitle }}</text>
+      <text class="ntf-body">{{ ntfBody }}</text>
     </view>
 
     <view class="empty" ink:else>
