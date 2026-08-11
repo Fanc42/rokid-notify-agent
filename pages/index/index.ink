@@ -156,6 +156,12 @@ export default {
     if (this.data.scanning) return
     this.setData({ scanning: true, configMsg: '拍照解析中…' })
 
+    // 环境能力检查（QuickJS 运行时可能缺对象）
+    if (typeof BarcodeDetector === 'undefined') {
+      this.setData({ scanning: false, configMsg: '当前环境无条码识别能力' })
+      return
+    }
+
     try {
       // 1. 获取相机——兼容两种入口：wx.createCameraContext()（文档）/ wx.media.createCameraContext()（sample）
       let camera = this.cameraContext
@@ -241,7 +247,8 @@ export default {
       })
     } catch (e) {
       console.error('[notify-agent] scan error', e)
-      this.setData({ scanning: false, configMsg: '扫码失败：' + String(e).slice(0, 40) })
+      const errText = String((e && e.message) || e || 'unknown')
+      this.setData({ scanning: false, configMsg: '扫码失败：' + errText.slice(0, 80) })
     }
   },
 
