@@ -38,6 +38,7 @@ export default {
         clearInterval(this._configWatch)
         this._configWatch = null
         this.startStream(cfg)
+        this.startPolling(cfg)
       }
     }, 2000)
   },
@@ -118,12 +119,12 @@ export default {
     this._es = this.createEventSource(url, handlers)
   },
 
-  // ---- 轮询兜底（蓝牙中继下 SSE 长连可能不实时；30s 短请求拉取）----
+  // ---- 轮询兜底（SSE 不可用/不实时时；短请求拉取，10s 间隔）----
   startPolling(cfg) {
     if (this._pollTimer) return
     this._cfg = cfg
     this._lastTs = this._lastTs || Date.now()
-    this._pollTimer = setInterval(() => this.pollNotifications(), 30000)
+    this._pollTimer = setInterval(() => this.pollNotifications(), 10000)
   },
 
   async pollNotifications() {
@@ -135,7 +136,11 @@ export default {
       if (!response.ok) return
       const body = await response.json()
       const items = (body && body.notifications) || []
-      if (items.length === 0) return
+      if (items.length === 0) {
+        console.log('[notify-agent] poll empty, since', this._lastTs || 0)
+        return
+      }
+      console.log('[notify-agent] poll got', items.length, 'notifications')
       let maxTs = this._lastTs || 0
       for (const ntf of items) {
         if (ntf.ts && ntf.ts > maxTs) maxTs = ntf.ts
