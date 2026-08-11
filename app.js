@@ -66,8 +66,16 @@ export default {
     return null
   },
 
-  // ---- SSE 订阅（wx.createEventSource——AIUI 运行时标准；标准 EventSource 仅兜底）----
+  // ---- SSE 订阅（wx.createEventSource——AIUI 运行时标准；连续失败自动切标准 EventSource 兜底）----
   createEventSource(url, handlers) {
+    // 已确认 wx 版在模拟器不可用（持续 onError）→ 直接用标准 EventSource（浏览器环境）
+    if (this._sseUseStd) {
+      const es = new EventSource(url)
+      es.onopen = handlers.onOpen
+      es.onmessage = handlers.onMessage
+      es.onerror = handlers.onError
+      return es
+    }
     if (typeof wx !== 'undefined' && wx.createEventSource) {
       const task = wx.createEventSource({ url, method: 'GET' })
       if (task.onOpen) task.onOpen(handlers.onOpen)
@@ -75,7 +83,6 @@ export default {
       if (task.onError) task.onError(handlers.onError)
       return task
     }
-    // 标准 EventSource 兜底（模拟器/浏览器环境）
     const es = new EventSource(url)
     es.onopen = handlers.onOpen
     es.onmessage = handlers.onMessage
@@ -109,6 +116,14 @@ export default {
         localStorage.setItem(KEY_CONNECTED, 'false')
         try { this._es && this._es.close && this._es.close() } catch (e) { /* ignore */ }
         this._es = null
+        // wx.createEventSource 连续失败 ≥3 次 → 切标准 EventSource（模拟器网页端可用）
+        if (!this._sseUseStd && this._sseErrCount === undefined) this._sseErrCount = 0
+        this._sseErrCount = (this._sseErrCount || 0) + 1
+        if (!this._sseUseStd && this._sseErrCount >= 3 && typeof EventSource !== 'undefined') {
+          console.log('[notify-agent] switch to standard EventSource')
+          this._sseUseStd = true
+          this._retryMs = 1000
+        }
         // 指数退避重连：5s → 10s → 20s → 40s → 60s 封顶
         const delay = this._retryMs || 5000
         this._retryMs = Math.min(delay * 2, 60000)
