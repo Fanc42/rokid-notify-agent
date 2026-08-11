@@ -298,11 +298,14 @@ export default {
     })
   },
 
-  // ---- photo → ImageData：优先直接取 imageData 字段，失败走 canvas 转换 ----
+  // ---- photo → ImageData：优先直接取 imageData 字段，失败走官方 Blob→Canvas 链路 ----
   async photoToImageData(photo) {
     const direct = this.toImageDataObj(photo)
     if (direct) return direct
-    // 文件路径（tempFilePath）→ canvas
+    // 官方链路（AIUI image_apis sample）：photo.data(ArrayBuffer) → Blob → createImageBitmap → Canvas → getImageData
+    const viaBlob = await this.photoToImageDataViaBlob(photo)
+    if (viaBlob) return viaBlob
+    // 兜底：文件路径 / base64 dataUrl → wx 老式 canvas（真机环境可能可用）
     const filePath = this.getPhotoFilePath(photo)
     if (filePath) {
       try {
@@ -311,7 +314,6 @@ export default {
         console.warn('[notify-agent] canvas convert (path) fail', e)
       }
     }
-    // base64/dataUrl（极速档返回 {data, mimeType}）→ canvas
     const dataUrl = this.photoToDataUrl(photo)
     if (dataUrl) {
       try {
@@ -321,6 +323,36 @@ export default {
       }
     }
     return null
+  },
+
+  // ---- 官方链路：data(ArrayBuffer) → Blob → createImageBitmap → 等比缩放 Canvas → ImageData ----
+  async photoToImageDataViaBlob(photo) {
+    try {
+      const data = photo.data || photo.arrayBuffer || photo.buffer
+      if (!data || typeof data === 'string') return null
+      if (typeof createImageBitmap !== 'function' || typeof Canvas === 'undefined') return null
+      const blob = new Blob([data], { type: photo.mimeType || 'image/jpeg' })
+      const bitmap = await createImageBitmap(blob)
+      if (!bitmap || !bitmap.width || !bitmap.height) return null
+      // 等比缩放：最大边 360（小图识别稳、快；小于 360 不放大防模糊）
+      const maxSize = 360
+      let w = bitmap.width
+      let h = bitmap.height
+      if (w > maxSize || h > maxSize) {
+        const scale = Math.min(maxSize / w, maxSize / h)
+        w = Math.round(w * scale)
+        h = Math.round(h * scale)
+      }
+      const canvas = new Canvas(w, h)
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(bitmap, 0, 0, w, h)
+      const imageData = ctx.getImageData(0, 0, w, h)
+      if (!imageData || !imageData.data) return null
+      return this.toImageData(imageData.data, w, h)
+    } catch (e) {
+      console.warn('[notify-agent] blob canvas fail', e)
+      return null
+    }
   },
 
   // ---- 扫码配置 ----
