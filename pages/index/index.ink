@@ -153,13 +153,21 @@ export default {
     this.setData({ scanning: true, configMsg: '拍照解析中…' })
 
     try {
-      // 1. 获取相机
+      // 1. 获取相机——兼容两种入口：wx.createCameraContext()（文档）/ wx.media.createCameraContext()（sample）
       let camera = this.cameraContext
       if (!camera || typeof camera.takePhoto !== 'function') {
-        if (wx.media && typeof wx.media.createCameraContext === 'function') {
-          camera = wx.media.createCameraContext()
-          this.cameraContext = camera
+        const createCamera =
+          (wx.media && typeof wx.media.createCameraContext === 'function' && wx.media.createCameraContext.bind(wx.media)) ||
+          (typeof wx.createCameraContext === 'function' && wx.createCameraContext.bind(wx))
+        if (createCamera) {
+          try {
+            camera = createCamera()
+          } catch (e) {
+            console.error('[notify-agent] createCameraContext error', e)
+            camera = null
+          }
         }
+        this.cameraContext = camera
       }
       if (!camera || typeof camera.takePhoto !== 'function') {
         this.setData({ scanning: false, configMsg: '相机不可用' })
