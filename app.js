@@ -11,9 +11,6 @@ const KEY_CONNECTED = 'ntf_connected'  // SSE 连接状态
 // 通知自动关闭时长（ms）
 const AUTO_CLOSE_MS = 8000
 
-// 配置二维码 URL 前缀（用于提示用户去哪里生成二维码）
-const CONFIG_HELP_URL = 'https://hermes.fanc.link/rokid-config.html'
-
 export default {
   onLaunch: function () {
     console.log('[notify-agent] launch')
@@ -66,24 +63,6 @@ export default {
       console.error('[notify-agent] config parse error', e)
     }
     return null
-  },
-
-  // 扫码配置成功后调用：保存 + 立即连接
-  saveConfig(cfg) {
-    if (!cfg || typeof cfg.sseUrl !== 'string' || !cfg.sseUrl || typeof cfg.token !== 'string' || !cfg.token) {
-      console.error('[notify-agent] invalid config', cfg)
-      return false
-    }
-    const normalized = {
-      v: 1,
-      sseUrl: cfg.sseUrl.replace(/\/+$/, ''),          // 去尾斜杠
-      deviceId: cfg.deviceId || 'glasses-rokid-01',
-      token: cfg.token,
-    }
-    localStorage.setItem(KEY_CONFIG, JSON.stringify(normalized))
-    console.log('[notify-agent] config saved', normalized.sseUrl, normalized.deviceId)
-    this.startStream(normalized)
-    return true
   },
 
   // ---- SSE 订阅 ----
