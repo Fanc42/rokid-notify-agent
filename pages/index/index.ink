@@ -33,6 +33,7 @@
 
 import wx from 'wx'
 import { BarcodeDetector } from 'barcode'
+import { decodeQrFromBytesAsync } from '../../lib/local-qr.js'
 
 const KEY_CONFIG = 'ntf_config'
 const KEY_CURRENT = 'ntf_current'
@@ -222,6 +223,37 @@ export default {
       out += i + 2 < u8.length ? B64[b2 & 63] : '='
     }
     return out
+  },
+
+  base64ToBytes(b64) {
+    const text = String(b64 || '').replace(/\s+/g, '')
+    if (!text) return null
+    const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    const len = text.length
+    const pad = text.charAt(len - 1) === '=' ? (text.charAt(len - 2) === '=' ? 2 : 1) : 0
+    const out = new Uint8Array(Math.floor((len * 3) / 4) - pad)
+    let p = 0
+    for (let i = 0; i < len; i += 4) {
+      const c0 = B64.indexOf(text.charAt(i))
+      const c1 = B64.indexOf(text.charAt(i + 1))
+      const c2 = B64.indexOf(text.charAt(i + 2))
+      const c3 = B64.indexOf(text.charAt(i + 3))
+      const n = (c0 << 18) | (c1 << 12) | ((c2 < 0 ? 0 : c2) << 6) | (c3 < 0 ? 0 : c3)
+      out[p++] = (n >> 16) & 0xff
+      if (p < out.length) out[p++] = (n >> 8) & 0xff
+      if (p < out.length) out[p++] = n & 0xff
+    }
+    return out
+  },
+
+  // ---- 从 photo 取图片字节（local-qr 解码输入；data 支持 ArrayBuffer/Uint8Array/base64 字符串）----
+  getPhotoBinary(photo) {
+    if (!photo) return null
+    const data = photo.data || photo.arrayBuffer || photo.buffer || photo.bytes
+    if (data && data.byteLength !== undefined) return data instanceof Uint8Array ? data : new Uint8Array(data)
+    const b64 = this.getPhotoBase64(photo)
+    if (b64) return this.base64ToBytes(b64)
+    return null
   },
 
   // ---- photo → data URL（canvas.drawImage 支持；mimeType 缺失时按前缀猜）----
@@ -443,8 +475,23 @@ export default {
       }
       console.log('[notify-agent] detect attempts:', attempts.join(' | '))
       if (!codes || codes.length === 0) {
-        this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
-        return
+        // 5. 兜底：BarcodeDetector 全空（模拟器 stub 等）→ local-qr 纯 JS 解码（jpg/png/webp）
+        let localRaw = ''
+        try {
+          const bytes = this.getPhotoBinary(photo)
+          if (bytes && bytes.byteLength > 32) {
+            const qrResult = await decodeQrFromBytesAsync(bytes)
+            console.log('[notify-agent] local-qr', qrResult ? (qrResult.found ? '命中 ' + qrResult.rawPreview : qrResult.rawPreview) : '无结果')
+            if (qrResult && qrResult.found && qrResult.text) localRaw = String(qrResult.text)
+          }
+        } catch (e) {
+          console.warn('[notify-agent] local-qr fail', e)
+        }
+        if (!localRaw) {
+          this.setData({ scanning: false, configMsg: '未识别到二维码，请对准后重试' })
+          return
+        }
+        codes = [{ rawValue: localRaw }]
       }
       const raw = codes[0].rawValue || ''
       console.log('[notify-agent] qr raw', raw.slice(0, 120))
