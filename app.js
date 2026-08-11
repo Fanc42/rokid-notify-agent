@@ -21,6 +21,7 @@ export default {
     if (cfg) {
       console.log('[notify-agent] config found, connecting')
       this.startStream(cfg)
+      this.startPolling(cfg)   // 轮询兜底（蓝牙中继下 SSE 可能不实时）
     } else {
       console.log('[notify-agent] no config, watching for scan result')
       localStorage.setItem(KEY_CONNECTED, 'false')
@@ -103,6 +104,7 @@ export default {
       try {
         const ntf = JSON.parse(event.data)
         console.log('[notify-agent] received', ntf.type, ntf.priority)
+        if (ntf.ts && ntf.ts > (this._lastTs || 0)) this._lastTs = ntf.ts
         this.handleNotification(ntf)
       } catch (e) {
         console.error('[notify-agent] parse error', e)
@@ -118,6 +120,36 @@ export default {
       const delay = this._retryMs || 5000
       this._retryMs = Math.min(delay * 2, 60000)
       setTimeout(() => this.startStream(cfg), delay)
+    }
+  },
+
+  // ---- 轮询兜底（蓝牙中继下 SSE 长连可能不实时；30s 短请求拉取）----
+  startPolling(cfg) {
+    if (this._pollTimer) return
+    this._cfg = cfg
+    this._lastTs = this._lastTs || Date.now()
+    this._pollTimer = setInterval(() => this.pollNotifications(), 30000)
+  },
+
+  async pollNotifications() {
+    const cfg = this._cfg
+    if (!cfg) return
+    try {
+      const url = `${cfg.sseUrl}/api/hermes/notifications/poll?deviceId=${encodeURIComponent(cfg.deviceId)}&token=${encodeURIComponent(cfg.token)}&since=${this._lastTs || 0}`
+      const response = await fetch(url, { cache: 'no-store' })
+      if (!response.ok) return
+      const body = await response.json()
+      const items = (body && body.notifications) || []
+      if (items.length === 0) return
+      let maxTs = this._lastTs || 0
+      for (const ntf of items) {
+        if (ntf.ts && ntf.ts > maxTs) maxTs = ntf.ts
+        this.handleNotification(ntf)
+      }
+      if (maxTs > (this._lastTs || 0)) this._lastTs = maxTs
+      localStorage.setItem(KEY_CONNECTED, 'true')
+    } catch (e) {
+      console.error('[notify-agent] poll error', e)
     }
   },
 
