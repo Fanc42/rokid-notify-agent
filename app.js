@@ -11,13 +11,26 @@ const KEY_CONNECTED = 'ntf_connected'  // SSE 连接状态
 // 通知自动关闭时长（ms）
 const AUTO_CLOSE_MS = 8000
 
+// ⚙️ 源码默认配置（模拟器/Craft 预览测试用——启动直接连接，跳过扫码）
+// 真机分发：置空（''）→ 走扫码配置；这里只用于本地/模拟器联调
+const DEFAULT_CONFIG = {
+  sseUrl: 'https://hermes.fanc.link',
+  deviceId: 'glasses-rokid-01',
+  token: 'dev_a518efdec3f1179247fcce87bbdef51e1024c27f04f9b9675eb09d2475e966be',
+}
+
 // 配置二维码 URL 前缀（用于提示用户去哪里生成二维码）
 const CONFIG_HELP_URL = 'https://hermes.fanc.link/rokid-config.html'
 
 export default {
   onLaunch: function () {
     console.log('[notify-agent] launch')
-    const cfg = this.loadConfig()
+    // 配置优先级：localStorage 扫码配置 > 源码默认配置（模拟器测试）> 扫码等待
+    let cfg = this.loadConfig()
+    if (!cfg && DEFAULT_CONFIG.sseUrl && DEFAULT_CONFIG.token) {
+      cfg = { ...DEFAULT_CONFIG }
+      console.log('[notify-agent] using source default config', cfg.sseUrl)
+    }
     if (cfg) {
       console.log('[notify-agent] config found, connecting')
       this.startStream(cfg)

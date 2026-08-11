@@ -33,9 +33,6 @@ export default {
     needConfig: false,    // 未配置 → 扫码引导
     scanning: false,      // 拍照解析中
     configMsg: '',        // 配置结果提示
-    manualSseUrl: '',     // 手动配置输入（模拟器/无相机）
-    manualDeviceId: 'glasses-rokid-01',
-    manualToken: '',
   },
 
   onShow() {
@@ -118,37 +115,6 @@ export default {
       try { return new ImageData(clamped, w, h) } catch (e) { /* fall through */ }
     }
     return { data: clamped, width: w, height: h }
-  },
-
-  // ---- 手动配置（模拟器/无相机场景；真机优先扫码）----
-  manualConfig: {
-    sseUrl: '',
-    token: '',
-  },
-
-  saveManualConfig() {
-    const sseUrl = String(this.data.manualSseUrl || '').trim()
-    const token = String(this.data.manualToken || '').trim()
-    const deviceId = String(this.data.manualDeviceId || 'glasses-rokid-01').trim()
-    if (!sseUrl || !token) {
-      this.setData({ configMsg: '请填写服务器地址和 Token' })
-      return
-    }
-    const normalized = {
-      v: 1,
-      sseUrl: sseUrl.replace(/\/+$/, ''),
-      deviceId,
-      token,
-    }
-    localStorage.setItem(KEY_CONFIG, JSON.stringify(normalized))
-    this.setData({ configMsg: '配置已保存，正在连接…', needConfig: false })
-  },
-
-  onManualInput(e) {
-    const field = e.currentTarget && e.currentTarget.attributes ? e.currentTarget.attributes['data-bind'] : null
-    const key = field || 'manualSseUrl'
-    const value = e.detail && e.detail.value !== undefined ? e.detail.value : (e.currentTarget && e.currentTarget.value)
-    this.setData({ [key]: value })
   },
 
   // ---- 扫码配置 ----
@@ -256,24 +222,12 @@ export default {
 </script>
 
 <page>
-  <!-- 未配置：扫码引导 + 手动配置 -->
+  <!-- 未配置：扫码引导 -->
   <view class="config-panel" ink:if="{{ needConfig }}">
     <text class="config-title">通知中心 · 未配置</text>
     <text class="config-hint">按镜腿键扫描配置二维码</text>
-    <text class="config-sub">或在服务器打开配置页生成二维码：</text>
+    <text class="config-sub">在服务器打开配置页生成二维码：</text>
     <text class="config-url">hermes.fanc.link/rokid-config.html</text>
-
-    <!-- 手动配置（模拟器/无相机场景） -->
-    <view class="manual-box">
-      <text class="manual-label">服务器地址</text>
-      <input class="manual-input" value="{{ manualSseUrl }}" placeholder="https://xxx" data-bind="manualSseUrl" bindinput="onManualInput" />
-      <text class="manual-label">设备 ID</text>
-      <input class="manual-input" value="{{ manualDeviceId }}" data-bind="manualDeviceId" bindinput="onManualInput" />
-      <text class="manual-label">Token</text>
-      <input class="manual-input" value="{{ manualToken }}" placeholder="dev_…" data-bind="manualToken" bindinput="onManualInput" />
-      <button class="manual-save" bindtap="saveManualConfig">保存并连接</button>
-    </view>
-
     <text class="config-status {{ scanning ? 'active' : '' }}">{{ configMsg || (scanning ? '拍照解析中…' : '') }}</text>
   </view>
 
@@ -354,46 +308,6 @@ page {
 }
 .config-status.active {
   color: #40FF5E;
-}
-
-/* ---- 手动配置 ---- */
-.manual-box {
-  width: 100%;
-  margin-top: 14px;
-  border: 1px solid rgba(64, 255, 94, 0.24);
-  border-radius: 8px;
-  padding: 12px;
-  box-sizing: border-box;
-}
-.manual-label {
-  display: block;
-  color: rgba(64, 255, 94, 0.48);
-  font-size: 11px;
-  margin-top: 8px;
-}
-.manual-label:first-child {
-  margin-top: 0;
-}
-.manual-input {
-  width: 100%;
-  border: 1px solid rgba(64, 255, 94, 0.32);
-  border-radius: 6px;
-  background: rgba(64, 255, 94, 0.06);
-  color: #40FF5E;
-  font-size: 13px;
-  padding: 6px 8px;
-  margin-top: 4px;
-  box-sizing: border-box;
-}
-.manual-save {
-  margin-top: 12px;
-  border: 1px solid #40FF5E;
-  border-radius: 6px;
-  background: rgba(64, 255, 94, 0.12);
-  color: #40FF5E;
-  font-size: 13px;
-  padding: 6px 0;
-  text-align: center;
 }
 
 /* ---- 状态角标 ---- */
